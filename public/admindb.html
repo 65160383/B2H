@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="th">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>B2H — Admin</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            background: #f8f9fa
+        }
+    </style>
+</head>
+
+<body>
+    <nav class="navbar navbar-expand bg-white border-bottom mb-0">
+        <div class="container-fluid">
+            <a class="navbar-brand ms-3" href="#">B2H Admin</a>
+            <div class="ms-auto me-3">
+                <button id="logoutBtn" class="btn btn-outline-secondary btn-sm">Logout</button>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid">
+        <div class="row">
+            <aside class="col-auto bg-light border-end vh-100 p-3" style="width:220px;">
+                <h6 class="mb-3">เมนู</h6>
+                <ul class="nav flex-column">
+                    <li class="nav-item"><a class="nav-link active" href="#" data-section="users">ผู้ใช้</a></li>
+                    <li class="nav-item"><a class="nav-link" href="#" data-section="reports">รายงาน</a></li>
+                </ul>
+            </aside>
+            <main class="col p-4">
+                <div id="section-users">
+                    <h3 class="">ผู้ใช้</h3>
+                    <p class="text-muted">รายชื่อผู้ใช้</p>
+                    <div id="usersList" class="mt-2">กำลังโหลดรายชื่อผู้ใช้...</div>
+                </div>
+
+                <div id="section-reports" style="display:none;">
+                    <h3 class="">รายงานจากผู้ใช้</h3>
+                    <p class="text-muted">จัดการรายงานจากผู้ใช้</p>
+                    <div id="reportsList" class="mt-2">กำลังโหลดรายงาน...</div>
+                    <nav id="reportsPagination" class="mt-3" aria-label="Reports pagination"></nav>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        (async function () {
+            const token = localStorage.getItem('b2h_token');
+            if (!token) { window.location.href = '/'; return; }
+            try {
+                const meRes = await fetch('/api/me', { headers: { 'Authorization': 'Bearer ' + token } });
+                const me = await meRes.json();
+                if (!me.loggedIn || !me.user || me.user.role !== 'admin') { window.location.href = '/'; return; }
+            } catch (e) { window.location.href = '/'; return; }
+
+            document.getElementById('logoutBtn').addEventListener('click', () => { localStorage.removeItem('b2h_token'); window.location.href = '/'; });
+
+            // Load non-admin users automatically
+            async function loadUsers() {
+                const usersEl = document.getElementById('usersList');
+                try {
+                    const res = await fetch('/api/admin/users', { headers: { 'Authorization': 'Bearer ' + token } });
+                    if (!res.ok) throw new Error('Network');
+                    const data = await res.json();
+                    if (!data.success) throw new Error('Failed');
+                    if (!data.users || data.users.length === 0) {
+                        usersEl.innerHTML = '<div class="text-muted">ยังไม่มีผู้ใช้</div>';
+                        return;
+                    }
+                    usersEl.innerHTML = '<ul class="list-group">' + data.users.map(u => {
+                        const name = ((u.first_name || '') + ' ' + (u.last_name || '')).trim() || '(ไม่ระบุชื่อ)';
+                        const isSuspended = (u.status === 'suspended' || u.status === 'banned');
+                        const statusLabel = (u.status === 'active') ? 'ปกติ' : (isSuspended ? 'ระงับ' : (u.status || 'ไม่ระบุ'));
+                        const actionBtn = isSuspended
+                            ? `<button data-id="${u.user_id}" data-action="activate-user" class="btn btn-sm btn-success">ยกเลิกการระงับ</button>`
+                            : `<button data-id="${u.user_id}" data-action="suspend-user" class="btn btn-sm btn-outline-danger">ระงับ</button>`;
+                        return `<li class="list-group-item d-flex justify-content-between align-items-center"><div><strong>${name}</strong><div class="small text-muted">${u.email}</div></div><div class="text-end"><div class="small text-muted mb-1">${statusLabel}</div>${actionBtn}</div></li>`;
+                    }).join('') + '</ul>';
+                } catch (err) {
+                    usersEl.innerHTML = '<div class="text-muted">ไม่สามารถโหลดรายชื่อผู้ใช้ได้</div>';
+                }
+            }
+
+            // Reports pagination state
+            let reportsPage = 1;
+            let reportsLimit = 8;
+
+            // Load reports for admin (paginated)
+            async function loadReports(page = 1) {
+                const el = document.getElementById('reportsList');
+                reportsPage = page;
+                try {
+                    const res = await fetch('/api/admin/reports?limit=' + encodeURIComponent(reportsLimit) + '&page=' + encodeURIComponent(page), { headers: { 'Authorization': 'Bearer ' + token } });
+                    if (!res.ok) throw new Error('Network');
+                    const data = await res.json();
+                    if (!data.success) throw new Error('Failed');
+                    const reports = data.reports || [];
+                    const total = data.total || 0;
+                    const totalPages = Math.max(1, Math.ceil(total / reportsLimit));
+                    if (!reports.length) { el.innerHTML = '<div class="text-muted">ยังไม่มีรายงาน</div>'; renderReportsPagination(totalPages); return; }
+                    el.innerHTML = reports.map(r => {
+                        const reporter = `<div class="small text-muted">จาก: <strong>${escapeHtml(r.reporter_name)}</strong> (${escapeHtml(r.reporter_email)})</div>`;
+                        let targetInfo = '';
+                        if (r.target_type === 'product') targetInfo = `<div class="small">สินค้า: ${escapeHtml(r.product_title || '(ไม่ระบุ)')}</div>`;
+                        if (r.target_type === 'user') targetInfo = `<div class="small">ผู้ใช้เป้าหมาย: ${escapeHtml(r.target_user_name || r.target_user_email || '(ไม่ระบุ)')}</div>`;
+                        const attachments = (r.attachments && r.attachments.length) ? `<div class="mt-2">` + r.attachments.map(a => `<a href="${a}" target="_blank"><img src="${a}" style="max-height:80px;margin-right:8px;border:1px solid #ddd;padding:2px;" /></a>`).join('') + `</div>` : '';
+                        const statusBadge = `<span class="badge bg-${r.status === 'pending' ? 'warning' : (r.status === 'reviewed' ? 'success' : 'secondary')}">${escapeHtml(r.status)}</span>`;
+                        let actionBtn = '';
+                        if (r.status !== 'reviewed') actionBtn += `<button data-id="${r.report_id}" data-action="mark-reviewed" class="btn btn-sm btn-primary mb-1">รับเรื่อง</button>`;
+                        if (r.status !== 'rejected') actionBtn += `<button data-id="${r.report_id}" data-action="reject" class="btn btn-sm btn-outline-danger mb-1">ปฏิเสธ</button>`;
+                        // If report targets a product, allow admin to delete the product directly
+                        if (r.target_type === 'product' && r.target_id) {
+                            actionBtn += `<button data-id="${r.target_id}" data-action="delete-product" class="btn btn-sm btn-outline-danger">ลบสินค้า</button>`;
+                        }
+                        const adminNoteHtml = r.admin_note ? `<div class="mt-2"><strong>หมายเหตุผู้ดูแล:</strong> ${escapeHtml(r.admin_note)}</div>` : '';
+                        const reviewInfo = r.review_time ? `<div class="small text-muted mt-2">ตรวจโดย: ${escapeHtml(String(r.reviewed_by || ''))} เวลา: ${escapeHtml(String(r.review_time || ''))}</div>` : '';
+                        return `<div class="card mb-2"><div class="card-body"><div class="d-flex justify-content-between align-items-start"><div><strong>รายงาน #${r.report_id}</strong> ${statusBadge}${reporter}${targetInfo}<div class="mt-2">${escapeHtml(r.reason || '')}</div>${attachments}${adminNoteHtml}${reviewInfo}</div><div class="text-end">${actionBtn}</div></div></div></div>`;
+                    }).join('');
+                    renderReportsPagination(totalPages);
+                } catch (err) {
+                    el.innerHTML = '<div class="text-muted">ไม่สามารถโหลดรายงานได้</div>';
+                    renderReportsPagination(1);
+                }
+            }
+
+            function renderReportsPagination(totalPages) {
+                const nav = document.getElementById('reportsPagination');
+                if (!nav) return;
+                if (totalPages <= 1) { nav.innerHTML = ''; return; }
+                let items = '';
+                const start = Math.max(1, reportsPage - 2);
+                const end = Math.min(totalPages, start + 4);
+                if (reportsPage > 1) items += `<button class="btn btn-sm btn-outline-primary me-1" data-page="${reportsPage - 1}">ก่อนหน้า</button>`;
+                for (let p = start; p <= end; p++) {
+                    items += `<button class="btn btn-sm ${p === reportsPage ? 'btn-primary' : 'btn-outline-secondary'} me-1" data-page="${p}">${p}</button>`;
+                }
+                if (reportsPage < totalPages) items += `<button class="btn btn-sm btn-outline-primary" data-page="${reportsPage + 1}">ถัดไป</button>`;
+                nav.innerHTML = items;
+            }
+
+            // minimal html-escape helper
+            function escapeHtml(s) { if (!s && s !== 0) return ''; return String(s).replace(/[&<>\"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+
+            document.addEventListener('click', async function (e) {
+                if (e.target && e.target.matches('button[data-action="mark-reviewed"]')) {
+                    const id = e.target.getAttribute('data-id');
+                    try {
+                        const res = await fetch('/api/admin/reports/' + encodeURIComponent(id), { method: 'PUT', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token }, body: JSON.stringify({ status: 'reviewed' }) });
+                        if (!res.ok) throw new Error('Network');
+                        const d = await res.json();
+                        if (d.success) {
+                            loadReports(reportsPage);
+                        }
+                    } catch (err) {
+                        alert('ไม่สามารถอัปเดตสถานะรายงานได้');
+                    }
+                }
+                // reject action: prompt for admin note then set status rejected
+                if (e.target && e.target.matches('button[data-action="reject"]')) {
+                    const id = e.target.getAttribute('data-id');
+                    const note = prompt('ใส่เหตุผลการปฏิเสธ (note)');
+                    if (note === null) return; // cancelled
+                    try {
+                        const res = await fetch('/api/admin/reports/' + encodeURIComponent(id), { method: 'PUT', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token }, body: JSON.stringify({ status: 'rejected', admin_note: note }) });
+                        if (!res.ok) throw new Error('Network');
+                        const d = await res.json();
+                        if (d.success) loadReports(reportsPage);
+                    } catch (err) {
+                        alert('ไม่สามารถอัปเดตสถานะรายงานได้');
+                    }
+                }
+                // pagination buttons
+                if (e.target && e.target.matches('#reportsPagination button[data-page]')) {
+                    const p = parseInt(e.target.getAttribute('data-page')) || 1;
+                    loadReports(p);
+                }
+                // suspend/activate user from users list
+                if (e.target && e.target.matches('button[data-action="suspend-user"]')) {
+                    const id = e.target.getAttribute('data-id');
+                    if (!confirm('ต้องการระงับผู้ใช้นี้ใช่หรือไม่?')) return;
+                    try {
+                        const res = await fetch('/api/admin/users/' + encodeURIComponent(id) + '/status', { method: 'PUT', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token }, body: JSON.stringify({ action: 'suspend' }) });
+                        if (!res.ok) throw new Error('Network');
+                        const d = await res.json(); if (d.success) loadUsers();
+                    } catch (err) { alert('ไม่สามารถเปลี่ยนสถานะผู้ใช้ได้'); }
+                }
+                if (e.target && e.target.matches('button[data-action="activate-user"]')) {
+                    const id = e.target.getAttribute('data-id');
+                    try {
+                        const res = await fetch('/api/admin/users/' + encodeURIComponent(id) + '/status', { method: 'PUT', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token }, body: JSON.stringify({ action: 'activate' }) });
+                        if (!res.ok) throw new Error('Network');
+                        const d = await res.json(); if (d.success) loadUsers();
+                    } catch (err) { alert('ไม่สามารถเปลี่ยนสถานะผู้ใช้ได้'); }
+                }
+                // report actions: delete product / delete review
+                if (e.target && e.target.matches('button[data-action="delete-product"]')) {
+                    const id = e.target.getAttribute('data-id');
+                    if (!confirm('ลบสินค้านี้จากระบบ?')) return;
+                    try {
+                        const res = await fetch('/api/admin/products/' + encodeURIComponent(id), { method: 'DELETE', headers: { 'Authorization': 'Bearer ' + token } });
+                        const d = await res.json(); if (d.success) loadReports(reportsPage);
+                    } catch (err) { alert('ไม่สามารถลบสินค้าได้'); }
+                }
+                if (e.target && e.target.matches('button[data-action="delete-review"]')) {
+                    const id = e.target.getAttribute('data-id');
+                    if (!confirm('ลบรีวิวนี้จากระบบ?')) return;
+                    try {
+                        const res = await fetch('/api/admin/reviews/' + encodeURIComponent(id), { method: 'DELETE', headers: { 'Authorization': 'Bearer ' + token } });
+                        const d = await res.json(); if (d.success) loadReports(reportsPage);
+                    } catch (err) { alert('ไม่สามารถลบรีวิวได้'); }
+                }
+            });
+
+            // sidebar nav
+            document.querySelectorAll('aside .nav-link').forEach(a => a.addEventListener('click', (ev) => {
+                ev.preventDefault();
+                document.querySelectorAll('aside .nav-link').forEach(x => x.classList.remove('active'));
+                a.classList.add('active');
+                const section = a.getAttribute('data-section');
+                document.getElementById('section-users').style.display = section === 'users' ? '' : 'none';
+                document.getElementById('section-reports').style.display = section === 'reports' ? '' : 'none';
+            }));
+
+            loadUsers();
+            loadReports(1);
+        })();
+    </script>
+</body>
+
+</html>
