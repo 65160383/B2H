@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="th">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>B2H — ประวัติการซื้อขาย</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+
+<body>
+    <nav class="navbar navbar-light bg-white shadow-sm">
+        <div class="container">
+            <a class="navbar-brand" href="/dashboard.html">B2H</a>
+            <div id="navRight">
+                <a class="btn btn-outline-secondary btn-sm" href="/dashboard.html">← กลับหน้าหลัก</a>
+            </div>
+        </div>
+    </nav>
+
+    <main class="container py-4">
+        <h3>ประวัติการซื้อขาย</h3>
+        <p class="text-muted">ประวัติการซื้อขายของคุณ (ผู้ซื้อและผู้ขาย)</p>
+        <div id="historyContent"></div>
+    </main>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        async function loadHistory() {
+            const container = document.getElementById('historyContent');
+            container.innerHTML = '<div class="text-muted">กำลังโหลด...</div>';
+            try {
+                const token = localStorage.getItem('b2h_token');
+                if (!token) return container.innerHTML = '<div class="alert alert-warning">กรุณาเข้าสู่ระบบเพื่อดูประวัติ</div>';
+                const res = await fetch('/api/history', { headers: { 'Authorization': 'Bearer ' + token } });
+                const jr = await res.json();
+                if (!jr.success) return container.innerHTML = '<div class="alert alert-danger">ไม่สามารถโหลดข้อมูลได้</div>';
+                const { purchases, sales } = jr;
+                const parts = [];
+                // Purchases
+                parts.push('<h5 class="mt-3">การซื้อของฉัน</h5>');
+                if (!purchases || purchases.length === 0) {
+                    parts.push('<div class="alert alert-info">ยังไม่มีรายการซื้อที่เสร็จสมบูรณ์</div>');
+                } else {
+                    parts.push('<div class="list-group">');
+                    for (const p of purchases) {
+                        const sellerName = (p.seller_first || '') + ' ' + (p.seller_last || '');
+                        parts.push(`<div class="list-group-item d-flex align-items-center justify-content-between">
+                            <div class="d-flex align-items-center">
+                              <div style="width:72px;height:72px;flex:0 0 72px;margin-right:12px"><img src="${(p.img_url || '').replace(/"/g, '') || '/placeholder.png'}" style="width:72px;height:72px;object-fit:cover;border-radius:6px"></div>
+                              <div class="flex-grow-1">
+                                  <div class="fw-bold">${escapeHtml(p.title || 'ไม่ระบุ')}</div>
+                                  <div class="text-muted small">ผู้ขาย: ${escapeHtml((sellerName.trim()) || p.seller_email || '-')}</div>
+                                  <div class="text-muted small">ราคา: ${escapeHtml(String(p.price || ''))}</div>
+                              </div>
+                            </div>
+                                                        <div class="ms-3 d-flex" style="gap:8px;align-items:center">
+                                                            <button class="btn btn-sm btn-outline-primary review-seller-btn" data-product-id="${escapeHtml(p.product_id)}" data-seller-id="${escapeHtml(p.seller_id)}">รีวิวผู้ขาย</button>
+                                                            <button class="btn btn-sm btn-danger report-seller-btn" data-product-id="${escapeHtml(p.product_id)}" data-seller-id="${escapeHtml(p.seller_id)}">รายงานผู้ขาย</button>
+                                                        </div>
+                        </div>`);
+                    }
+                    parts.push('</div>');
+                }
+
+                // Sales
+                parts.push('<h5 class="mt-4">การขายของฉัน</h5>');
+                if (!sales || sales.length === 0) {
+                    parts.push('<div class="alert alert-info">ยังไม่มีรายการขายที่เสร็จสมบูรณ์</div>');
+                } else {
+                    parts.push('<div class="list-group">');
+                    for (const s of sales) {
+                        const buyerName = (s.buyer_first || '') + ' ' + (s.buyer_last || '');
+                        parts.push(`<div class="list-group-item d-flex align-items-center">
+                            <div style="width:72px;height:72px;flex:0 0 72px;margin-right:12px"><img src="${(s.img_url || '').replace(/"/g, '') || '/placeholder.png'}" style="width:72px;height:72px;object-fit:cover;border-radius:6px"></div>
+                            <div class="flex-grow-1">
+                                <div class="fw-bold">${escapeHtml(s.title || 'ไม่ระบุ')}</div>
+                                <div class="text-muted small">ผู้ซื้อ: ${escapeHtml((buyerName.trim()) || s.buyer_email || '-')}</div>
+                                <div class="text-muted small">ราคา: ${escapeHtml(String(s.price || ''))}</div>
+                            </div>
+                        </div>`);
+                    }
+                    parts.push('</div>');
+                }
+
+                container.innerHTML = parts.join('\n');
+            } catch (e) {
+                container.innerHTML = '<div class="alert alert-danger">เกิดข้อผิดพลาดในการโหลดข้อมูล</div>';
+            }
+        }
+
+        function escapeHtml(s) { return (s || '').toString().replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;'); }
+
+        (function () { loadHistory(); })();
+
+        // Review modal logic: open modal when clicking review buttons and submit review
+        document.addEventListener('click', function (e) {
+            if (e.target && e.target.matches('.review-seller-btn')) {
+                const btn = e.target;
+                const productId = btn.getAttribute('data-product-id');
+                const sellerId = btn.getAttribute('data-seller-id');
+                showReviewModal(productId, sellerId);
+            }
+        });
+
+        function showReviewModal(productId, sellerId) {
+            const existing = document.getElementById('reviewModal');
+            if (existing) existing.remove();
+            const wrapper = document.createElement('div');
+            wrapper.innerHTML = `
+                        <div class="modal fade" id="reviewModal" tabindex="-1" aria-hidden="true">
+                            <div class="modal-dialog">
+                                <div class="modal-content">
+                                    <div class="modal-header">
+                                        <h5 class="modal-title">รีวิวผู้ขาย</h5>
+                                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                    </div>
+                                    <form>
+                                        <div class="modal-body">
+                                            <div class="mb-3">
+                                                <label class="form-label">คะแนน</label>
+                                                <select name="rating" class="form-select" required>
+                                                    <option value="5">5 — ดีมาก</option>
+                                                    <option value="4">4 — ดี</option>
+                                                    <option value="3">3 — ปานกลาง</option>
+                                                    <option value="2">2 — แย่</option>
+                                                    <option value="1">1 — แย่มาก</option>
+                                                </select>
+                                            </div>
+                                            <div class="mb-3">
+                                                <label class="form-label">ความคิดเห็น (ไม่บังคับ)</label>
+                                                <textarea name="comment" class="form-control" rows="4" placeholder="เขียนรีวิวของคุณ"></textarea>
+                                            </div>
+                                        </div>
+                                        <div class="modal-footer">
+                                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">ปิด</button>
+                                            <button type="submit" class="btn btn-primary">ส่งรีวิว</button>
+                                        </div>
+                                    </form>
+                                </div>
+                            </div>
+                        </div>`;
+            document.body.appendChild(wrapper);
+            const modalEl = document.getElementById('reviewModal');
+            const bsModal = new bootstrap.Modal(modalEl);
+            bsModal.show();
+
+            modalEl.querySelector('form').addEventListener('submit', async function (ev) {
+                ev.preventDefault();
+                const form = ev.target;
+                const rating = form.rating.value;
+                const comment = form.comment.value || '';
+                const token = localStorage.getItem('b2h_token');
+                if (!token) {
+                    alert('กรุณาเข้าสู่ระบบเพื่อส่งรีวิว');
+                    return;
+                }
+                try {
+                    const res = await fetch('/api/products/' + encodeURIComponent(productId) + '/reviews', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': 'Bearer ' + token
+                        },
+                        body: JSON.stringify({ product_id: productId, seller_id: sellerId, rating: rating, comment: comment })
+                    });
+                    const jr = await res.json();
+                    if (jr && jr.success) {
+                        alert('ขอบคุณสำหรับรีวิว!');
+                        bsModal.hide();
+                    } else {
+                        alert((jr && jr.message) || 'ไม่สามารถส่งรีวิวได้');
+                    }
+                } catch (err) {
+                    console.error(err);
+                    alert('เกิดข้อผิดพลาดในการส่งรีวิว');
+                }
+            });
+        }
+
+        // Report seller: open modal and submit report
+        document.addEventListener('click', function (e) {
+            if (e.target && e.target.matches('.report-seller-btn')) {
+                const btn = e.target;
+                const productId = btn.getAttribute('data-product-id');
+                const sellerId = btn.getAttribute('data-seller-id');
+                showReportModal(productId, sellerId);
+            }
+        });
+
+        function showReportModal(productId, sellerId) {
+            const existing = document.getElementById('reportModal');
+            if (existing) existing.remove();
+            const wrapper = document.createElement('div');
+            wrapper.innerHTML = `
+                <div class="modal fade" id="reportModal" tabindex="-1" aria-hidden="true">
+                    <div class="modal-dialog">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title">รายงานผู้ขาย</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <form>
+                                <div class="modal-body">
+                                    <div class="mb-3">
+                                        <label class="form-label">ประเภทปัญหา</label>
+                                        <select name="category" class="form-select" required>
+                                            <option value="scam">หลอกลวง/ฉ้อโกง</option>
+                                            <option value="abuse">คุกคาม/ละเมิด</option>
+                                            <option value="fake">สินค้าปลอม</option>
+                                            <option value="other">อื่น ๆ</option>
+                                        </select>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label">รายละเอียด</label>
+                                        <textarea name="reason" class="form-control" rows="4" placeholder="อธิบายเหตุผลที่รายงาน (จำเป็น)" required></textarea>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label">แนบรูปหลักฐาน (ถ้ามี)</label>
+                                        <input type="file" name="attachments" class="form-control" accept="image/*" multiple />
+                                    </div>
+                                </div>
+                                <div class="modal-footer">
+                                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">ยกเลิก</button>
+                                    <button type="submit" class="btn btn-danger">ส่งรายงาน</button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>`;
+            document.body.appendChild(wrapper);
+            const modalEl = document.getElementById('reportModal');
+            const bsModal = new bootstrap.Modal(modalEl);
+            bsModal.show();
+
+            modalEl.querySelector('form').addEventListener('submit', async function (ev) {
+                ev.preventDefault();
+                const form = ev.target;
+                const category = form.category.value;
+                const reason = form.reason.value || '';
+                const token = localStorage.getItem('b2h_token');
+                if (!token) { alert('กรุณาเข้าสู่ระบบเพื่อรายงาน'); return; }
+                try {
+                    const fd = new FormData();
+                    fd.append('target_type', 'user');
+                    fd.append('target_id', sellerId);
+                    if (productId) fd.append('product_id', productId);
+                    fd.append('category', category);
+                    fd.append('reason', reason);
+                    const fileInput = form.querySelector('input[name="attachments"]');
+                    if (fileInput && fileInput.files && fileInput.files.length) {
+                        for (let i = 0; i < fileInput.files.length; i++) {
+                            fd.append('attachments', fileInput.files[i]);
+                        }
+                    }
+
+                    const res = await fetch('/api/products/' + encodeURIComponent(productId) + '/report', {
+                        method: 'POST',
+                        headers: { 'Authorization': 'Bearer ' + token },
+                        body: fd
+                    });
+                    const jr = await res.json();
+                    if (jr && jr.success) {
+                        alert('ส่งรายงานเรียบร้อยแล้ว ขอบคุณที่แจ้งให้เราทราบ');
+                        bsModal.hide();
+                    } else {
+                        alert((jr && jr.message) || 'ไม่สามารถส่งรายงานได้');
+                    }
+                } catch (err) {
+                    console.error(err);
+                    alert('เกิดข้อผิดพลาดในการส่งรายงาน');
+                }
+            });
+        }
+    </script>
+</body>
+
+</html>
